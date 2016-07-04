@@ -43,10 +43,15 @@ uint8_t tempstr_i;
 uint8_t tempstr2_i;
 uint8_t tempstr3_i;
 
+//Tempcounter
+uint8_t u8tmp;
+
 //Timers and stuff
 unsigned long tmr_last_ping;
 
 // cv5600 stuff
+#define CV5600_TIMEOUT_CMD 1500
+#define CV5600_BAUDRATE 9600
 uint8_t cv5600_rx_buf[16];
 uint8_t cv5600_rx_buf_i;
 unsigned long cv5600_tmr_last_rx;
@@ -73,9 +78,13 @@ uint8_t module_status_last;
 unsigned long tmr_module_status_change;
 
 //Passage
+#define KEYSTR_LEN 16
 uint8_t cv5600_pin[4];
 uint8_t cv5600_pin_i;
 uint8_t cv5600_rfid[4];
+uint8_t cv5600_keystr[KEYSTR_LEN];
+uint8_t cv5600_keystr_i;
+
 
 //Door status
 enum door_statuses{DOORLOCK_OPEN=1, DOORLOCK_CLOSED=2};
@@ -107,15 +116,11 @@ void setup()
   digitalWrite(PIN_CV_LED, HIGH);
   
   Bridge.begin();	// Initialize the Bridge
-  SerialUSB.begin(115200);	// Initialize the Serial
   Console.begin();
 
   // set the data rate for the SoftwareSerial port
-  cvSerial.begin(115200);
+  cvSerial.begin(CV5600_BAUDRATE);
   cv5600_cmd = CV5600_IDLE;
-
-  // Wait until a Serial Monitor is connected.
-//  while (!SerialUSB);
 
   //Play init tune
   cvLED(CV5600_LED_RED);
@@ -133,7 +138,6 @@ void setup()
   //Enable watchdog
   wdt_enable(WDTO_8S);
 
-  SerialUSB.println(F("Gympassv5 - init done"));      // print the number as well
   Console.println(F("Gympassv5 - init done"));      // print the number as well
 }
 
@@ -172,13 +176,17 @@ void loop()
             cv5600_rfid[0], cv5600_rfid[1], cv5600_rfid[2], cv5600_rfid[3],
             cv5600_pin[0] + 48, cv5600_pin[1] + 48, cv5600_pin[2] + 48, cv5600_pin[3] + 48);
 
-    sprintf(tempstr,"curl -u gym:muskler http://intranet.strongest.se/gympassv4/index.php/DoorpassV5/hasvalidcard/%s/%s", tempstr2, PASSAGE_POINT);
-    SerialUSB.println(tempstr);
+//    sprintf(tempstr,"curl -u gym:muskler http://intranet.strongest.se/gympassv4/index.php/DoorpassV5/hasvalidcard/%s/%s", tempstr2, PASSAGE_POINT);
+    sprintf(tempstr,"http://intranet.strongest.se/gympassv4/index.php/DoorpassV5/hasvalidcard/%s/%s", tempstr2, PASSAGE_POINT);
+    p.begin("curl");
+    p.addParameter(F("-u"));
+    p.addParameter(F("gym:muskler"));
+    p.addParameter(tempstr);
+    p.runAsynchronously();
+
     Console.println(tempstr);
 
-    p.runShellCommandAsynchronously(tempstr);
-
-    delay(500);
+//    p.runShellCommandAsynchronously(tempstr);
 
     change_module_status(MODULE_PASSAGE_QUERY_SENT);
     break;
@@ -191,7 +199,7 @@ void loop()
     if (! p.running())
       change_module_status(MODULE_PASSAGE_QUERY_RECV);
 
-    if (timer_expired(tmr_cv5600_blink, 50))
+    if (timer_expired(tmr_cv5600_blink, 25))
     {
       cvToggleLED();
       tmr_cv5600_blink = millis();
@@ -210,16 +218,9 @@ void loop()
         tempstr_i = sizeof(tempstr) - 1;
     }
     tempstr[tempstr_i] = 0;
-    SerialUSB.print("Query recv ");
-    Console.print("Query recv ");
-    
-    SerialUSB.print(tempstr_i);
+    Console.print(F("Query recv "));
     Console.print(tempstr_i);
-
-    SerialUSB.println(" bytes");
-    Console.println(" bytes");
-    
-    SerialUSB.println(tempstr);
+    Console.println(F(" bytes"));
     Console.println(tempstr);
 
     parse_passage_query_recv();
@@ -249,8 +250,39 @@ void loop()
       cv5600_cmd = CV5600_IDLE;
       if (cv5600_pin_i < 4)
         cv5600_pin[cv5600_pin_i] = cv5600_cmd_buf[0];
-        
       cv5600_pin_i++;
+
+      //For the pincode login
+      if (cv5600_cmd_buf[0] == 0x0a) // *
+        cv5600_keystr_i = 0;
+      else if (cv5600_cmd_buf[0] == 0x0b) // #
+      {
+        Console.println(F("# pressed, querying server"));
+
+        //Store pincode in tempstr2
+        for(u8tmp=0; u8tmp < cv5600_keystr_i; u8tmp++)
+        {
+          tempstr2[u8tmp] = cv5600_keystr[u8tmp] + 48;
+        }
+        tempstr2[cv5600_keystr_i] = 0;
+
+        sprintf(tempstr,"http://intranet.strongest.se/gympassv4/index.php/DoorpassV5/pincode/%s/%s", tempstr2, PASSAGE_POINT);
+        Console.println(tempstr);
+    
+        p.begin("curl");
+        p.addParameter(F("-u"));
+        p.addParameter(F("gym:muskler"));
+        p.addParameter(tempstr);
+        p.runAsynchronously();
+    
+        change_module_status(MODULE_PASSAGE_QUERY_SENT);
+      }
+      //Store to string
+      else if (cv5600_keystr_i < KEYSTR_LEN)
+      {
+        cv5600_keystr[cv5600_keystr_i] = cv5600_cmd_buf[0];
+        cv5600_keystr_i++;
+      }
       break;
 
     default:
@@ -270,15 +302,13 @@ void loop()
     if(timer_expired(tmr_door1_open, 10000))
     {
       door1_closelock();
-      SerialUSB.println(F("Door1 timeout, locking door"));
       Console.println(F("Door1 timeout, locking door"));
     }      
 
     if(door1_sensor_open())
     {
       door1_closelock();
-      SerialUSB.println("Door1 open, locking door");
-      Console.println("Door1 open, locking door");
+      Console.println(F("Door1 open, locking door"));
     }
   }
 
@@ -287,15 +317,13 @@ void loop()
     if (timer_expired(tmr_door2_open, 10000))
     {
       door2_closelock();
-      SerialUSB.println("Door2 timeout, locking door");
-      Console.println("Door2 timeout, locking door");
+      Console.println(F("Door2 timeout, locking door"));
     }      
 
     if (door2_sensor_open())
     {
       door2_closelock();
-      SerialUSB.println("Door2 open, locking door");
-      Console.println("Door2 open, locking door");
+      Console.println(F("Door2 open, locking door"));
     }
   }
 
@@ -303,10 +331,8 @@ void loop()
   if (abs(millis() - tmr_last_ping) > 15000)
   {
     tmr_last_ping = millis();
-    SerialUSB.print("Gympassv5: ");      // print the number as well
-    Console.print("Gympassv5: ");      // print the number as well
+    Console.print(F("Gympassv5: "));      // print the number as well
     getStateStr();
-    SerialUSB.println(tempstr);
     Console.println(tempstr);
   }
 
@@ -356,9 +382,9 @@ void update_inputs()
 
 void usbserial_handler()
 {
-  if (SerialUSB.available())
+  if (Console.available())
   {
-    tempstr_i = SerialUSB.read();
+    tempstr_i = Console.read();
 
     switch(tempstr_i)
     {
@@ -383,10 +409,10 @@ int cvHandler()
   if ((cv5600_rx_status == RX_RECV) ||
       (cv5600_rx_status == RX_IDLE))
   {
-    while (cvSerial.available()) 
+    if (cvSerial.available()) 
     {
       cv5600_rx_status = RX_RECV;
-      cv5600_tmr_last_rx = millis();
+      cv5600_tmr_last_rx = micros();
       cv5600_rx_buf[cv5600_rx_buf_i] = cvSerial.read();
       cv5600_rx_buf_i++;
   
@@ -396,25 +422,29 @@ int cvHandler()
   }
   
   if (cv5600_rx_status == RX_RECV)
-    if (timer_expired(cv5600_tmr_last_rx,50))
+  {
+    if (cv5600_rx_buf_i == 8)
+    {
+      if ((cv5600_rx_buf[3] == 0x02) && (cv5600_rx_buf[7] == 0x03))
+        cv5600_rx_status = RX_DONE;
+    }   
+    
+    if (timer_expired_micros(cv5600_tmr_last_rx,CV5600_TIMEOUT_CMD))
       cv5600_rx_status = RX_DONE;
-
+  }
+  
   if (cv5600_rx_status == RX_DONE)
   {
-    SerialUSB.println("cv5600 RX_DONE");
-    Console.println("cv5600 RX_DONE");
+    Console.println(F("cv5600 RX_DONE"));
 
     sprintf(tempstr, "Bytes recv:%i", cv5600_rx_buf_i);
-    SerialUSB.println(tempstr);
     Console.println(tempstr);
 
     for(int i=0; i<cv5600_rx_buf_i; i++)
     {
       sprintf(tempstr, " %02X", cv5600_rx_buf[i]);
-      SerialUSB.print(tempstr);
       Console.print(tempstr);
     }
-    SerialUSB.println("");
     Console.println("");
 
     //Send it to the parser
@@ -449,7 +479,6 @@ int cvHandler_parse()
     cvLED(CV5600_LED_RED);
 
     sprintf(tempstr, "Mifare [%02x%02x%02x%02x]", cv5600_cmd_buf[0], cv5600_cmd_buf[1], cv5600_cmd_buf[2], cv5600_cmd_buf[3]);
-    SerialUSB.println(tempstr);
     Console.println(tempstr);
   }
   //Check if keypad
@@ -462,14 +491,12 @@ int cvHandler_parse()
     cv5600_cmd = CV5600_KEYPAD;
     cv5600_cmd_buf[0] = cv5600_rx_buf[5];
     sprintf(tempstr, "Keypad [%02x]", cv5600_cmd_buf[0]);
-    SerialUSB.println(tempstr);
     Console.println(tempstr);
   }
   else
   {
     cv5600_cmd = CV5600_READERROR;
-    SerialUSB.println("CV5600 read error");
-    Console.println("CV5600 read error");
+    Console.println(F("CV5600 read error"));
   }
 }
 
@@ -509,6 +536,16 @@ uint8_t getCheckSum(char *string, int strlength)
 bool timer_expired(unsigned long tmr, unsigned int time_ms)
 {
   if (abs(millis() - tmr) > time_ms)
+  {
+    return true;
+  }
+  
+  return false;
+}
+
+bool timer_expired_micros(unsigned long tmr, unsigned int time_ms)
+{
+  if (abs(micros() - tmr) > time_ms)
   {
     return true;
   }
@@ -571,10 +608,8 @@ void change_module_status(uint8_t new_status)
   module_status = new_status;
   tmr_module_status_change = millis();
 
-  SerialUSB.print("Statechange: ");      // print the number as well
-  Console.print("Statechange: ");      // print the number as well
+  Console.print(F("Statechange: "));      // print the number as well
   getStateStr();
-  SerialUSB.println(tempstr);
   Console.println(tempstr);
 
   //Dump sensors
@@ -585,7 +620,6 @@ void usbprint_sensors()
 {
   //Dump sensors
   sprintf(tempstr,"Door 1 - button[%i] sensor[%i] : Door 2 button[%i] sensor[%i]", digitalRead(PIN_GP_DOOR1_BUTTON), digitalRead(PIN_GP_DOOR1_SENSOR), digitalRead(PIN_GP_DOOR2_BUTTON), digitalRead(PIN_GP_DOOR2_SENSOR));
-  SerialUSB.println(tempstr);
   Console.println(tempstr);
 
 }
@@ -606,7 +640,6 @@ void parse_passage_query_recv()
   pos = strstr(tempstr, "<dpv5>") - tempstr;
 
   sprintf(tempstr2, "Result: %c", tempstr[pos+6]);
-  SerialUSB.println(tempstr2);
   Console.println(tempstr2);
 
   if (tempstr[pos+6] == '1')
@@ -691,5 +724,3 @@ inline bool door2_button_pushed()
 {
   return (! digitalRead(PIN_GP_DOOR2_BUTTON));
 }
-
-
