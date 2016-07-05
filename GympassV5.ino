@@ -3,6 +3,11 @@
 */
 
 #define PASSAGE_POINT "hemmatest"
+#define TIME_TO_IDLE_MODE 10000
+#define TIME_DOOR1_UNLOCK 10000
+#define TIME_DOOR2_UNLOCK 10000
+
+#define ONEDOORMODE 0
 
 #include <avr/wdt.h>
 #include <Process.h>
@@ -22,8 +27,8 @@
 #define PIN_GP_DOOR2_BUTTON A1
 #define PIN_GP_DOOR1_SENSOR A2
 #define PIN_GP_DOOR2_SENSOR A3
-#define PIN_GP_DOOR1_SENSOR_OPEN LOW
-#define PIN_GP_DOOR2_SENSOR_OPEN LOW
+#define PIN_GP_DOOR1_SENSOR_OPEN HIGH
+#define PIN_GP_DOOR2_SENSOR_OPEN HIGH
 
 //Store states
 uint8_t PIN_GP_DOOR1_BUTTON_state;
@@ -70,7 +75,8 @@ unsigned long tmr_cv5600_blink;
 enum module_statuses{MODULE_IDLE=0, 
                      MODULE_RFID_READ=20, MODULE_RFID_WAIT_FOR_PIN=25, MODULE_RFID_PIN_READ=29, 
                      MODULE_KEYPAD_READ=40,
-                     MODULE_PASSAGE_QUERY_SENT=50, MODULE_PASSAGE_QUERY_RECV=55
+                     MODULE_PASSAGE_QUERY_SENT=50, MODULE_PASSAGE_QUERY_RECV=55,
+                     MODULE_PASSAGE_1_DOOR1_UNLOCKED, MODULE_PASSAGE_2_DOOR1_OPEN, MODULE_PASSAGE_3_DOOR1_CLOSED, MODULE_PASSAGE_4_DOOR2_OPEN
                      };
                      
 uint8_t module_status;
@@ -176,7 +182,6 @@ void loop()
             cv5600_rfid[0], cv5600_rfid[1], cv5600_rfid[2], cv5600_rfid[3],
             cv5600_pin[0] + 48, cv5600_pin[1] + 48, cv5600_pin[2] + 48, cv5600_pin[3] + 48);
 
-//    sprintf(tempstr,"curl -u gym:muskler http://intranet.strongest.se/gympassv4/index.php/DoorpassV5/hasvalidcard/%s/%s", tempstr2, PASSAGE_POINT);
     sprintf(tempstr,"http://intranet.strongest.se/gympassv4/index.php/DoorpassV5/hasvalidcard/%s/%s", tempstr2, PASSAGE_POINT);
     p.begin("curl");
     p.addParameter(F("-u"));
@@ -185,8 +190,6 @@ void loop()
     p.runAsynchronously();
 
     Console.println(tempstr);
-
-//    p.runShellCommandAsynchronously(tempstr);
 
     change_module_status(MODULE_PASSAGE_QUERY_SENT);
     break;
@@ -224,7 +227,44 @@ void loop()
     Console.println(tempstr);
 
     parse_passage_query_recv();
+//    change_module_status(MODULE_IDLE);
+    break;
+
+  case MODULE_PASSAGE_1_DOOR1_UNLOCKED: //Wait for door to open, then go to next state
+#if (ONEDOORMODE == 1)
+#pragma message ( "One door mode" )
+    door1_openlock();
+    door2_openlock();
     change_module_status(MODULE_IDLE);
+    break;
+#else
+#pragma message ( "Two door mode" )
+    if (door1_sensor_open())
+    {
+      change_module_status(MODULE_PASSAGE_2_DOOR1_OPEN);
+    }
+    break;
+#endif
+    
+  case MODULE_PASSAGE_2_DOOR1_OPEN: //Door1 is open, wait for it to close
+    if (! door1_sensor_open())
+    {
+      change_module_status(MODULE_PASSAGE_3_DOOR1_CLOSED);
+    }
+    break;
+
+  case MODULE_PASSAGE_3_DOOR1_CLOSED: //Door1 is closed, unlock door2
+    door2_openlock();
+    change_module_status(MODULE_PASSAGE_4_DOOR2_OPEN);
+    break;
+
+  case MODULE_PASSAGE_4_DOOR2_OPEN: //Door2 has been opened. Go to idle mode
+    if (door2_sensor_open())
+    {
+      change_module_status(MODULE_IDLE);
+    }
+    door1_closelock();
+    door2_closelock();
     break;
 
   default:
@@ -294,12 +334,12 @@ void loop()
   
   //Go to idle if nothing has happened
   if (module_status != MODULE_IDLE)
-    if (timer_expired(tmr_module_status_change, 10000))
+    if (timer_expired(tmr_module_status_change, TIME_TO_IDLE_MODE))
       change_module_status(MODULE_IDLE);
 
   if (door1_status == DOORLOCK_OPEN)
   {
-    if(timer_expired(tmr_door1_open, 10000))
+    if(timer_expired(tmr_door1_open, TIME_DOOR1_UNLOCK))
     {
       door1_closelock();
       Console.println(F("Door1 timeout, locking door"));
@@ -314,7 +354,7 @@ void loop()
 
   if (door2_status == DOORLOCK_OPEN)
   {
-    if (timer_expired(tmr_door2_open, 10000))
+    if (timer_expired(tmr_door2_open, TIME_DOOR2_UNLOCK))
     {
       door2_closelock();
       Console.println(F("Door2 timeout, locking door"));
@@ -645,7 +685,9 @@ void parse_passage_query_recv()
   if (tempstr[pos+6] == '1')
   {
     door1_openlock();
-    door2_openlock();
+//    door2_openlock();
+
+    change_module_status(MODULE_PASSAGE_1_DOOR1_UNLOCKED);
 
     //Play init tune
     cvLED(CV5600_LED_GREEN);
@@ -659,6 +701,10 @@ void parse_passage_query_recv()
   {
     door1_closelock();
     door2_closelock();
+
+    //Go to idle mode
+    change_module_status(MODULE_IDLE);
+
     cvLED(CV5600_LED_RED);
 
     cvSummer(100);
@@ -724,3 +770,4 @@ inline bool door2_button_pushed()
 {
   return (! digitalRead(PIN_GP_DOOR2_BUTTON));
 }
+
