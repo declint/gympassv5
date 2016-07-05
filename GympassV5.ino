@@ -7,6 +7,8 @@
 #define TIME_DOOR1_UNLOCK 10000
 #define TIME_DOOR2_UNLOCK 10000
 
+#define ONEDOORMODE 0
+
 #include <avr/wdt.h>
 #include <Process.h>
 #include <SoftwareSerial.h>
@@ -25,8 +27,8 @@
 #define PIN_GP_DOOR2_BUTTON A1
 #define PIN_GP_DOOR1_SENSOR A2
 #define PIN_GP_DOOR2_SENSOR A3
-#define PIN_GP_DOOR1_SENSOR_OPEN LOW
-#define PIN_GP_DOOR2_SENSOR_OPEN LOW
+#define PIN_GP_DOOR1_SENSOR_OPEN HIGH
+#define PIN_GP_DOOR2_SENSOR_OPEN HIGH
 
 //Store states
 uint8_t PIN_GP_DOOR1_BUTTON_state;
@@ -229,11 +231,20 @@ void loop()
     break;
 
   case MODULE_PASSAGE_1_DOOR1_UNLOCKED: //Wait for door to open, then go to next state
+#if (ONEDOORMODE == 1)
+#pragma message ( "One door mode" )
+    door1_openlock();
+    door2_openlock();
+    change_module_status(MODULE_IDLE);
+    break;
+#else
+#pragma message ( "Two door mode" )
     if (door1_sensor_open())
     {
       change_module_status(MODULE_PASSAGE_2_DOOR1_OPEN);
     }
     break;
+#endif
     
   case MODULE_PASSAGE_2_DOOR1_OPEN: //Door1 is open, wait for it to close
     if (! door1_sensor_open())
