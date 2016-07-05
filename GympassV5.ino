@@ -7,7 +7,7 @@
 #define TIME_DOOR1_UNLOCK 10000
 #define TIME_DOOR2_UNLOCK 10000
 
-#define ONEDOORMODE 0
+#define ONEDOORMODE 1
 
 #include <avr/wdt.h>
 #include <Process.h>
@@ -121,7 +121,7 @@ void setup()
   digitalWrite(PIN_CV_SUMMER, HIGH);
   digitalWrite(PIN_CV_LED, HIGH);
   
-  Bridge.begin();	// Initialize the Bridge
+  Bridge.begin();  // Initialize the Bridge
   Console.begin();
 
   // set the data rate for the SoftwareSerial port
@@ -255,6 +255,7 @@ void loop()
 
   case MODULE_PASSAGE_3_DOOR1_CLOSED: //Door1 is closed, unlock door2
     door2_openlock();
+    delay(500);
     change_module_status(MODULE_PASSAGE_4_DOOR2_OPEN);
     break;
 
@@ -263,8 +264,6 @@ void loop()
     {
       change_module_status(MODULE_IDLE);
     }
-    door1_closelock();
-    door2_closelock();
     break;
 
   default:
@@ -341,14 +340,14 @@ void loop()
   {
     if(timer_expired(tmr_door1_open, TIME_DOOR1_UNLOCK))
     {
-      door1_closelock();
       Console.println(F("Door1 timeout, locking door"));
+      door1_closelock();
     }      
 
     if(door1_sensor_open())
     {
-      door1_closelock();
       Console.println(F("Door1 open, locking door"));
+      door1_closelock();
     }
   }
 
@@ -356,14 +355,14 @@ void loop()
   {
     if (timer_expired(tmr_door2_open, TIME_DOOR2_UNLOCK))
     {
-      door2_closelock();
       Console.println(F("Door2 timeout, locking door"));
+      door2_closelock();
     }      
 
     if (door2_sensor_open())
     {
-      door2_closelock();
       Console.println(F("Door2 open, locking door"));
+      door2_closelock();
     }
   }
 
@@ -374,6 +373,8 @@ void loop()
     Console.print(F("Gympassv5: "));      // print the number as well
     getStateStr();
     Console.println(tempstr);
+    //Dump sensors
+    usbprint_sensors();
   }
 
   //Check USB Serial
@@ -619,6 +620,22 @@ void getStateStr()
     case MODULE_PASSAGE_QUERY_RECV:
       strcpy(tempstr2, "Module status: MODULE_PASSAGE_QUERY_RECV");
       break;
+    case MODULE_PASSAGE_1_DOOR1_UNLOCKED:
+      strcpy(tempstr2, "Module status: MODULE_PASSAGE_1_DOOR1_UNLOCKED");
+      break;
+    case MODULE_PASSAGE_2_DOOR1_OPEN:
+      strcpy(tempstr2, "Module status: MODULE_PASSAGE_2_DOOR1_OPEN");
+      break;
+    case MODULE_PASSAGE_3_DOOR1_CLOSED:
+      strcpy(tempstr2, "Module status: MODULE_PASSAGE_3_DOOR1_CLOSED");
+      break;
+    case MODULE_PASSAGE_4_DOOR2_OPEN:
+      strcpy(tempstr2, "Module status: MODULE_PASSAGE_4_DOOR2_OPEN");
+      break;
+    
+    default:
+      sprintf(tempstr2, "Module status: UNDEFINED_STATE:%i", module_status);
+      break;
   }
 
   switch(cv5600_rx_status)
@@ -659,7 +676,7 @@ void change_module_status(uint8_t new_status)
 void usbprint_sensors()
 {
   //Dump sensors
-  sprintf(tempstr,"Door 1 - button[%i] sensor[%i] : Door 2 button[%i] sensor[%i]", digitalRead(PIN_GP_DOOR1_BUTTON), digitalRead(PIN_GP_DOOR1_SENSOR), digitalRead(PIN_GP_DOOR2_BUTTON), digitalRead(PIN_GP_DOOR2_SENSOR));
+  sprintf(tempstr,"Door 1 - button[%i] sensor[%s] : Door 2 button[%i] sensor[%s]", digitalRead(PIN_GP_DOOR1_BUTTON), (door1_sensor_open()?"open":"closed"), digitalRead(PIN_GP_DOOR2_BUTTON), (door2_sensor_open()?"open":"closed"));
   Console.println(tempstr);
 
 }
@@ -720,6 +737,7 @@ void door1_openlock()
   tmr_door1_open = millis();
   door1_status = DOORLOCK_OPEN;
   digitalWrite(PIN_GP_DOOR1_LOCK, HIGH);
+  Console.println("Door1 unlock");
 }
 
 void door1_closelock()
@@ -728,6 +746,7 @@ void door1_closelock()
   door1_status = DOORLOCK_CLOSED;
   digitalWrite(PIN_GP_DOOR1_LOCK, LOW);
   cvLED(CV5600_LED_RED);
+  Console.println("Door1 lock");
 }
 
 void door2_openlock()
@@ -735,6 +754,7 @@ void door2_openlock()
   tmr_door2_open = millis();
   door2_status = DOORLOCK_OPEN;
   digitalWrite(PIN_GP_DOOR2_LOCK, HIGH);
+  Console.println("Door2 unlock");
 }
 
 void door2_closelock()
@@ -743,15 +763,23 @@ void door2_closelock()
   door2_status = DOORLOCK_CLOSED;
   digitalWrite(PIN_GP_DOOR2_LOCK, LOW);
   cvLED(CV5600_LED_RED);
+  Console.println("Door2 lock");
 }
 
+/*
 inline bool door1_sensor_open()
 {
   if (PIN_GP_DOOR1_SENSOR_OPEN == digitalRead(PIN_GP_DOOR1_SENSOR))
     return true;
   
   return false;
+}*/
+
+inline bool door1_sensor_open()
+{
+  return false;
 }
+
 
 inline bool door2_sensor_open()
 {
@@ -770,4 +798,3 @@ inline bool door2_button_pushed()
 {
   return (! digitalRead(PIN_GP_DOOR2_BUTTON));
 }
-
