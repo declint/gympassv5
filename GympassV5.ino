@@ -1,34 +1,61 @@
 /*
- Gympass v5
+ Gympass v5.1
 */
+#define LOCATION TANNEFORS
 
-#define PASSAGE_POINT "hemmatest"
+#if (LOCATION == TANNEFORS)
+  #pragma message ( "Location: Tannefors" )
+  #define PASSAGE_POINT "TANNEFORS"
+  #define ONEDOORMODE 1
+  #define TFHACK 1
+  /* pinout */
+  #define PIN_CV_RX 10
+  #define PIN_CV_TX 11
+  #define PIN_CV_LED 9
+  #define PIN_CV_SUMMER 8
+  #define PIN_GP_DOOR1_LOCK 12
+  #define PIN_GP_DOOR2_LOCK 13
+  #define PIN_GP_DOOR1_BUTTON A0
+  #define PIN_GP_DOOR2_BUTTON A1
+  #define PIN_GP_DOOR1_SENSOR A2
+  #define PIN_GP_DOOR2_SENSOR A3
+  #define PIN_GP_DOOR1_SENSOR_OPEN LOW
+  #define PIN_GP_DOOR2_SENSOR_OPEN LOW
+  
+#elif (LOCATION == SKAGGETORP)
+  #pragma message ( "Location: Skäggetorp" )
+  #define PASSAGE_POINT "TANNEFORS"
+  #define ONEDOORMODE 0
+  #define PIN_CV_RX 10
+  #define PIN_CV_TX 11
+  #define PIN_CV_LED 9
+  #define PIN_CV_SUMMER 8
+  #define PIN_GP_DOOR1_LOCK 12
+  #define PIN_GP_DOOR2_LOCK 13
+  #define PIN_GP_DOOR1_BUTTON A0
+  #define PIN_GP_DOOR2_BUTTON A1
+  #define PIN_GP_DOOR1_SENSOR A2
+  #define PIN_GP_DOOR2_SENSOR A3
+  #define PIN_GP_DOOR1_SENSOR_OPEN HIGH
+  #define PIN_GP_DOOR2_SENSOR_OPEN HIGH
+  
+#elif (LOCATION == RYD)
+  #pragma message ( "Location: Ryd" )
+  #define PASSAGE_POINT "TANNEFORS"
+  #define ONEDOORMODE 1
+#endif
+
+
+#define TIME_FOR_SERVER_FAILSAFE 3000
 #define TIME_TO_IDLE_MODE 10000
 #define TIME_DOOR1_UNLOCK 10000
 #define TIME_DOOR2_UNLOCK 10000
-
-#define ONEDOORMODE 1
+#define TIME_WEB_PING 30000
+#define URL_DOORPASS "http://intranet.strongest.se/gympassv4/index.php/DoorpassV5"
 
 #include <avr/wdt.h>
 #include <Process.h>
 #include <SoftwareSerial.h>
-
-
-/* pinout */
-#define PIN_CV_RX 10
-#define PIN_CV_TX 11
-#define PIN_CV_LED 9
-#define PIN_CV_SUMMER 8
-
-#define PIN_GP_DOOR1_LOCK 12
-#define PIN_GP_DOOR2_LOCK 13
-
-#define PIN_GP_DOOR1_BUTTON A0
-#define PIN_GP_DOOR2_BUTTON A1
-#define PIN_GP_DOOR1_SENSOR A2
-#define PIN_GP_DOOR2_SENSOR A3
-#define PIN_GP_DOOR1_SENSOR_OPEN HIGH
-#define PIN_GP_DOOR2_SENSOR_OPEN HIGH
 
 //Store states
 uint8_t PIN_GP_DOOR1_BUTTON_state;
@@ -53,6 +80,7 @@ uint8_t u8tmp;
 
 //Timers and stuff
 unsigned long tmr_last_ping;
+unsigned long tmr_web_ping;
 
 // cv5600 stuff
 #define CV5600_TIMEOUT_CMD 1500
@@ -76,7 +104,8 @@ enum module_statuses{MODULE_IDLE=0,
                      MODULE_RFID_READ=20, MODULE_RFID_WAIT_FOR_PIN=25, MODULE_RFID_PIN_READ=29, 
                      MODULE_KEYPAD_READ=40,
                      MODULE_PASSAGE_QUERY_SENT=50, MODULE_PASSAGE_QUERY_RECV=55,
-                     MODULE_PASSAGE_1_DOOR1_UNLOCKED, MODULE_PASSAGE_2_DOOR1_OPEN, MODULE_PASSAGE_3_DOOR1_CLOSED, MODULE_PASSAGE_4_DOOR2_OPEN
+                     MODULE_PASSAGE_1_DOOR1_UNLOCKED, MODULE_PASSAGE_2_DOOR1_OPEN, MODULE_PASSAGE_3_DOOR1_CLOSED, MODULE_PASSAGE_4_DOOR2_OPEN,
+                     MODULE_WEB_PING_SENT
                      };
                      
 uint8_t module_status;
@@ -144,6 +173,13 @@ void setup()
   //Enable watchdog
   wdt_enable(WDTO_8S);
 
+  //Reset timers
+  tmr_web_ping = millis();
+  tmr_door1_open = millis();
+  tmr_door2_open = millis();
+  tmr_module_status_change = millis();
+  tmr_last_ping = millis();
+
   Console.println(F("Gympassv5 - init done"));      // print the number as well
 }
 
@@ -153,6 +189,20 @@ void loop()
   switch(module_status)
   {
   case MODULE_IDLE:
+    if (timer_expired(tmr_web_ping, TIME_WEB_PING))
+    {
+      tmr_web_ping = millis();
+      web_ping();
+    }
+    break;
+
+  case MODULE_WEB_PING_SENT:
+    if (! p.running())
+      change_module_status(MODULE_IDLE);
+
+    if (timer_expired(tmr_module_status_change, TIME_FOR_SERVER_FAILSAFE))
+      change_module_status(MODULE_IDLE);
+
     break;
 
   case MODULE_RFID_READ:
@@ -182,14 +232,8 @@ void loop()
             cv5600_rfid[0], cv5600_rfid[1], cv5600_rfid[2], cv5600_rfid[3],
             cv5600_pin[0] + 48, cv5600_pin[1] + 48, cv5600_pin[2] + 48, cv5600_pin[3] + 48);
 
-    sprintf(tempstr,"http://intranet.strongest.se/gympassv4/index.php/DoorpassV5/hasvalidcard/%s/%s", tempstr2, PASSAGE_POINT);
-    p.begin("curl");
-    p.addParameter(F("-u"));
-    p.addParameter(F("gym:muskler"));
-    p.addParameter(tempstr);
-    p.runAsynchronously();
-
-    Console.println(tempstr);
+    sprintf(tempstr3, "/hasvalidcard/%s/%s", tempstr2, PASSAGE_POINT);
+    run_curl_asynch(tempstr3);
 
     change_module_status(MODULE_PASSAGE_QUERY_SENT);
     break;
@@ -201,6 +245,13 @@ void loop()
     // do nothing until the process finishes, so you get the whole output:
     if (! p.running())
       change_module_status(MODULE_PASSAGE_QUERY_RECV);
+
+    //Failsafe if no response
+    if (timer_expired(tmr_module_status_change, TIME_FOR_SERVER_FAILSAFE))
+    {
+      passage_ok();
+      break;
+    }
 
     if (timer_expired(tmr_cv5600_blink, 25))
     {
@@ -227,11 +278,19 @@ void loop()
     Console.println(tempstr);
 
     parse_passage_query_recv();
-//    change_module_status(MODULE_IDLE);
     break;
 
   case MODULE_PASSAGE_1_DOOR1_UNLOCKED: //Wait for door to open, then go to next state
-#if (ONEDOORMODE == 1)
+#if (TFHACK == 1)
+#pragma message ( "Tannefors mode" )
+    door1_openlock();
+    door2_openlock();
+    delay(250);
+    door1_closelock();
+    door2_closelock();
+    change_module_status(MODULE_IDLE);
+
+#elif (ONEDOORMODE == 1)
 #pragma message ( "One door mode" )
     door1_openlock();
     door2_openlock();
@@ -305,14 +364,8 @@ void loop()
         }
         tempstr2[cv5600_keystr_i] = 0;
 
-        sprintf(tempstr,"http://intranet.strongest.se/gympassv4/index.php/DoorpassV5/pincode/%s/%s", tempstr2, PASSAGE_POINT);
-        Console.println(tempstr);
-    
-        p.begin("curl");
-        p.addParameter(F("-u"));
-        p.addParameter(F("gym:muskler"));
-        p.addParameter(tempstr);
-        p.runAsynchronously();
+        sprintf(tempstr3, "/pincode/%s/%s", tempstr2, PASSAGE_POINT);
+        run_curl_asynch(tempstr3);
     
         change_module_status(MODULE_PASSAGE_QUERY_SENT);
       }
@@ -397,7 +450,7 @@ void loop()
     update_inputs();
 
     if (PIN_GP_DOOR2_BUTTON_state == LOW)
-      if ((! door1_sensor_open()) && (! door2_sensor_open()))
+//      if ((! door1_sensor_open()) && (! door2_sensor_open()))
         door2_openlock();
   }
   
@@ -597,64 +650,64 @@ bool timer_expired_micros(unsigned long tmr, unsigned int time_ms)
 void getStateStr()
 {
   //Module state
-  switch(module_status)
+  switch (module_status)
   {
     case MODULE_IDLE:
-      strcpy(tempstr2, "Module status: MODULE_IDLE");
+      strcpy_PF(tempstr2, PSTR("Module status: MODULE_IDLE"));
       break;
     case MODULE_RFID_READ:
-      strcpy(tempstr2, "Module status: MODULE_RFID_READ");
+      strcpy_PF(tempstr2, PSTR("Module status: MODULE_RFID_READ"));
       break;
     case MODULE_RFID_WAIT_FOR_PIN:
-      strcpy(tempstr2, "Module status: MODULE_RFID_WAIT_FOR_PIN");
+      strcpy_PF(tempstr2, PSTR("Module status: MODULE_RFID_WAIT_FOR_PIN"));
       break;
     case MODULE_RFID_PIN_READ:
-      strcpy(tempstr2, "Module status: MODULE_RFID_PIN_READ");
+      strcpy_PF(tempstr2, PSTR("Module status: MODULE_RFID_PIN_READ"));
       break;
     case MODULE_KEYPAD_READ:
-      strcpy(tempstr2, "Module status: MODULE_KEYPAD_READ");
+      strcpy_PF(tempstr2, PSTR("Module status: MODULE_KEYPAD_READ"));
       break;
     case MODULE_PASSAGE_QUERY_SENT:
-      strcpy(tempstr2, "Module status: MODULE_PASSAGE_QUERY_SENT");
+      strcpy_PF(tempstr2, PSTR("Module status: MODULE_PASSAGE_QUERY_SENT"));
       break;
     case MODULE_PASSAGE_QUERY_RECV:
-      strcpy(tempstr2, "Module status: MODULE_PASSAGE_QUERY_RECV");
+      strcpy_PF(tempstr2, PSTR("Module status: MODULE_PASSAGE_QUERY_RECV"));
       break;
     case MODULE_PASSAGE_1_DOOR1_UNLOCKED:
-      strcpy(tempstr2, "Module status: MODULE_PASSAGE_1_DOOR1_UNLOCKED");
+      strcpy_PF(tempstr2, PSTR( "Module status: MODULE_PASSAGE_1_DOOR1_UNLOCKED"));
       break;
     case MODULE_PASSAGE_2_DOOR1_OPEN:
-      strcpy(tempstr2, "Module status: MODULE_PASSAGE_2_DOOR1_OPEN");
+      strcpy_PF(tempstr2, PSTR("Module status: MODULE_PASSAGE_2_DOOR1_OPEN"));
       break;
     case MODULE_PASSAGE_3_DOOR1_CLOSED:
-      strcpy(tempstr2, "Module status: MODULE_PASSAGE_3_DOOR1_CLOSED");
+      strcpy_PF(tempstr2, PSTR("Module status: MODULE_PASSAGE_3_DOOR1_CLOSED"));
       break;
     case MODULE_PASSAGE_4_DOOR2_OPEN:
-      strcpy(tempstr2, "Module status: MODULE_PASSAGE_4_DOOR2_OPEN");
+      strcpy_PF(tempstr2, PSTR("Module status: MODULE_PASSAGE_4_DOOR2_OPEN"));
       break;
-    
+
     default:
       sprintf(tempstr2, "Module status: UNDEFINED_STATE:%i", module_status);
       break;
   }
 
-  switch(cv5600_rx_status)
+  switch (cv5600_rx_status)
   {
     case RX_IDLE:
-      strcpy(tempstr3, "CV5600 status: RX_IDLE");
+      strcpy_PF(tempstr3, PSTR("CV5600 status: RX_IDLE"));
       break;
     case RX_RECV:
-      strcpy(tempstr3, "CV5600 status: RX_RECV");
+      strcpy_PF(tempstr3, PSTR("CV5600 status: RX_RECV"));
       break;
     case RX_DONE:
-      strcpy(tempstr3, "CV5600 status: RX_DONE");
+      strcpy_PF(tempstr3, PSTR("CV5600 status: RX_DONE"));
       break;
     case RX_PARSED:
-      strcpy(tempstr3, "CV5600 status: RX_PARSED");
+      strcpy_PF(tempstr3, PSTR("CV5600 status: RX_PARSED"));
       break;
   }
 
-  sprintf(tempstr,"%s %s", tempstr2, tempstr3);
+  sprintf(tempstr, "%s %s", tempstr2, tempstr3);
 }
 
 void change_module_status(uint8_t new_status)
@@ -665,6 +718,9 @@ void change_module_status(uint8_t new_status)
   module_status = new_status;
   tmr_module_status_change = millis();
 
+  sprintf(tempstr, "[05%i]", millis()%10000);
+  Console.print(tempstr);
+  
   Console.print(F("Statechange: "));      // print the number as well
   getStateStr();
   Console.println(tempstr);
@@ -688,9 +744,7 @@ void parse_passage_query_recv()
   //failsafe
   if (tempstr_i < 2)
   {
-    door1_openlock();
-    door2_openlock();
-    cvLED(CV5600_LED_GREEN);
+    passage_ok();
     return;
   }
   
@@ -699,37 +753,46 @@ void parse_passage_query_recv()
   sprintf(tempstr2, "Result: %c", tempstr[pos+6]);
   Console.println(tempstr2);
 
-  if (tempstr[pos+6] == '1')
+  if (tempstr[pos+6] == '0') // Passage denied
   {
-    door1_openlock();
-//    door2_openlock();
-
-    change_module_status(MODULE_PASSAGE_1_DOOR1_UNLOCKED);
-
-    //Play init tune
-    cvLED(CV5600_LED_GREEN);
-    cvSummer(100);
-    delay(100);
-    cvSummer(100);
-    delay(100);
-    cvSummer(100);
+    passage_denied();
   }
   else
   {
-    door1_closelock();
-    door2_closelock();
-
-    //Go to idle mode
-    change_module_status(MODULE_IDLE);
-
-    cvLED(CV5600_LED_RED);
-
-    cvSummer(100);
-    delay(100);
-    cvSummer(250);
-    delay(250);
-    cvSummer(500);
+    passage_ok();
   }
+}
+
+void passage_ok()
+{
+  door1_openlock();
+
+  change_module_status(MODULE_PASSAGE_1_DOOR1_UNLOCKED);
+
+  //Play init tune
+  cvLED(CV5600_LED_GREEN);
+  cvSummer(100);
+  delay(100);
+  cvSummer(100);
+  delay(100);
+  cvSummer(100);
+}
+
+void passage_denied()
+{
+  door1_closelock();
+  door2_closelock();
+
+  //Go to idle mode
+  change_module_status(MODULE_IDLE);
+
+  cvLED(CV5600_LED_RED);
+
+  cvSummer(100);
+  delay(100);
+  cvSummer(250);
+  delay(250);
+  cvSummer(500);
 }
 
 void door1_openlock()
@@ -766,20 +829,13 @@ void door2_closelock()
   Console.println("Door2 lock");
 }
 
-/*
 inline bool door1_sensor_open()
 {
   if (PIN_GP_DOOR1_SENSOR_OPEN == digitalRead(PIN_GP_DOOR1_SENSOR))
     return true;
   
   return false;
-}*/
-
-inline bool door1_sensor_open()
-{
-  return false;
 }
-
 
 inline bool door2_sensor_open()
 {
@@ -798,3 +854,27 @@ inline bool door2_button_pushed()
 {
   return (! digitalRead(PIN_GP_DOOR2_BUTTON));
 }
+
+void web_ping()
+{
+  sprintf(tempstr3, "/doormodule_ping/%s", PASSAGE_POINT);
+  run_curl_asynch(tempstr3);
+  
+  change_module_status(MODULE_WEB_PING_SENT);
+}
+
+int run_curl_asynch(const char* cmd)
+{
+  strcpy_PF(tempstr, PSTR(URL_DOORPASS));
+  strcat(tempstr, cmd);
+  Console.println(tempstr);
+  
+  p.begin("curl");
+  p.addParameter(F("-u"));
+  p.addParameter(F("gym:muskler"));
+  p.addParameter(tempstr);
+  p.runAsynchronously();
+  
+}
+
+
