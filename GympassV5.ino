@@ -1,50 +1,47 @@
 /*
  Gympass v5.1
 */
-#define LOCATION TANNEFORS
-
-#if (LOCATION == TANNEFORS)
-  #pragma message ( "Location: Tannefors" )
-  #define PASSAGE_POINT "TANNEFORS"
-  #define ONEDOORMODE 1
-  #define TFHACK 1
-  /* pinout */
-  #define PIN_CV_RX 10
-  #define PIN_CV_TX 11
-  #define PIN_CV_LED 9
-  #define PIN_CV_SUMMER 8
-  #define PIN_GP_DOOR1_LOCK 12
-  #define PIN_GP_DOOR2_LOCK 13
-  #define PIN_GP_DOOR1_BUTTON A0
-  #define PIN_GP_DOOR2_BUTTON A1
-  #define PIN_GP_DOOR1_SENSOR A2
-  #define PIN_GP_DOOR2_SENSOR A3
-  #define PIN_GP_DOOR1_SENSOR_OPEN LOW
-  #define PIN_GP_DOOR2_SENSOR_OPEN LOW
+/*
+#pragma message ( "Location: Tannefors" )
+#define PASSAGE_POINT "TANNEFORS"
+#define ONEDOORMODE 1
+#define TFHACK 1
+//pinout
+#define PIN_CV_RX 10
+#define PIN_CV_TX 11
+#define PIN_CV_LED 9
+#define PIN_CV_SUMMER 8
+#define PIN_GP_DOOR1_LOCK 12
+#define PIN_GP_DOOR2_LOCK 13
+#define PIN_GP_DOOR1_BUTTON A0
+#define PIN_GP_DOOR2_BUTTON A1
+#define PIN_GP_DOOR1_SENSOR A2
+#define PIN_GP_DOOR2_SENSOR A3
+#define PIN_GP_DOOR1_SENSOR_OPEN LOW
+#define PIN_GP_DOOR2_SENSOR_OPEN LOW
+  */
   
-#elif (LOCATION == SKAGGETORP)
-  #pragma message ( "Location: Skäggetorp" )
-  #define PASSAGE_POINT "TANNEFORS"
-  #define ONEDOORMODE 0
-  #define PIN_CV_RX 10
-  #define PIN_CV_TX 11
-  #define PIN_CV_LED 9
-  #define PIN_CV_SUMMER 8
-  #define PIN_GP_DOOR1_LOCK 12
-  #define PIN_GP_DOOR2_LOCK 13
-  #define PIN_GP_DOOR1_BUTTON A0
-  #define PIN_GP_DOOR2_BUTTON A1
-  #define PIN_GP_DOOR1_SENSOR A2
-  #define PIN_GP_DOOR2_SENSOR A3
-  #define PIN_GP_DOOR1_SENSOR_OPEN HIGH
-  #define PIN_GP_DOOR2_SENSOR_OPEN HIGH
+#pragma message ( "Location: Skäggetorp" )
+#define PASSAGE_POINT "SKAGGET"
+#define ONEDOORMODE 0
+#define PIN_CV_RX 10
+#define PIN_CV_TX 11
+#define PIN_CV_LED 9
+#define PIN_CV_SUMMER 8
+#define PIN_GP_DOOR1_LOCK 12
+#define PIN_GP_DOOR2_LOCK 13
+#define PIN_GP_DOOR1_BUTTON A0
+#define PIN_GP_DOOR2_BUTTON A1
+#define PIN_GP_DOOR1_SENSOR A2
+#define PIN_GP_DOOR2_SENSOR A3
+#define PIN_GP_DOOR1_SENSOR_OPEN HIGH
+#define PIN_GP_DOOR2_SENSOR_OPEN HIGH
   
-#elif (LOCATION == RYD)
-  #pragma message ( "Location: Ryd" )
-  #define PASSAGE_POINT "TANNEFORS"
-  #define ONEDOORMODE 1
-#endif
-
+/*
+#pragma message ( "Location: Ryd" )
+#define PASSAGE_POINT "TANNEFORS"
+#define ONEDOORMODE 1
+*/
 
 #define TIME_FOR_SERVER_FAILSAFE 3000
 #define TIME_TO_IDLE_MODE 10000
@@ -876,5 +873,4 @@ int run_curl_asynch(const char* cmd)
   p.runAsynchronously();
   
 }
-
 
