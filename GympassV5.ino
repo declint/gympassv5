@@ -847,7 +847,7 @@ void parse_webping_recv()
 
   if (tempstr[pos_i+6] == '0') // Passage denied
   {
-    passage_denied();
+    return;
   }
   else if (tempstr[pos_i+6] == '1') // Passage ok, normal
   {
