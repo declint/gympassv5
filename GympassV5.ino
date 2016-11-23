@@ -43,10 +43,11 @@
 #define ONEDOORMODE 1
 */
 
-#define TIME_FOR_SERVER_FAILSAFE 3000
+#define TIME_FOR_SERVER_FAILSAFE 5000
 #define TIME_TO_IDLE_MODE 10000
-#define TIME_DOOR1_UNLOCK 10000
-#define TIME_DOOR2_UNLOCK 10000
+#define TIME_DOOR1_UNLOCK 20000
+#define TIME_DOOR2_UNLOCK 20000
+#define TIME_DOOR_UNLOCK_MODE 35000
 #define TIME_WEB_PING 30000
 #define URL_DOORPASS "http://intranet.strongest.se/gympassv4/index.php/DoorpassV5"
 
@@ -102,7 +103,7 @@ enum module_statuses{MODULE_IDLE=0,
                      MODULE_KEYPAD_READ=40,
                      MODULE_PASSAGE_QUERY_SENT=50, MODULE_PASSAGE_QUERY_RECV=55,
                      MODULE_PASSAGE_1_DOOR1_UNLOCKED, MODULE_PASSAGE_2_DOOR1_OPEN, MODULE_PASSAGE_3_DOOR1_CLOSED, MODULE_PASSAGE_4_DOOR2_OPEN,
-                     MODULE_WEB_PING_SENT
+                     MODULE_WEB_PING_SENT, MODULE_WEB_PING_RECV
                      };
                      
 uint8_t module_status;
@@ -119,6 +120,8 @@ uint8_t cv5600_keystr_i;
 
 
 //Door status
+uint8_t door_unlocked_state;
+unsigned long door_unlocked_tmr;
 enum door_statuses{DOORLOCK_OPEN=1, DOORLOCK_CLOSED=2};
 uint8_t door1_status;
 uint8_t door2_status;
@@ -167,6 +170,9 @@ void setup()
   //Init program loop
   module_status = MODULE_IDLE;
 
+  //Set door state to closed
+  door_unlocked_state = DOORLOCK_CLOSED;
+
   //Enable watchdog
   wdt_enable(WDTO_8S);
 
@@ -195,12 +201,28 @@ void loop()
 
   case MODULE_WEB_PING_SENT:
     if (! p.running())
-      change_module_status(MODULE_IDLE);
+      change_module_status(MODULE_WEB_PING_RECV);
 
     if (timer_expired(tmr_module_status_change, TIME_FOR_SERVER_FAILSAFE))
       change_module_status(MODULE_IDLE);
 
     break;
+
+  case MODULE_WEB_PING_RECV:
+    // Read command output. runShellCommand() should have passed "Signal: xx&":
+    tempstr_i = 0;
+    while (p.available()>0) 
+    {
+      tempstr[tempstr_i] = p.read();
+      tempstr_i++;
+      if (tempstr_i>sizeof(tempstr))
+        tempstr_i = sizeof(tempstr) - 1;
+    }
+    tempstr[tempstr_i] = 0;
+    parse_webping_recv();
+    change_module_status(MODULE_IDLE);
+    break;
+
 
   case MODULE_RFID_READ:
     cv5600_pin_i = 0;
@@ -386,36 +408,49 @@ void loop()
     if (timer_expired(tmr_module_status_change, TIME_TO_IDLE_MODE))
       change_module_status(MODULE_IDLE);
 
-  if (door1_status == DOORLOCK_OPEN)
-  {
-    if(timer_expired(tmr_door1_open, TIME_DOOR1_UNLOCK))
+  // Check door unlocked state
+  if (door_unlocked_state == DOORLOCK_OPEN)
+  { 
+    if(timer_expired(door_unlocked_tmr, TIME_DOOR_UNLOCK_MODE))
     {
-      Console.println(F("Door1 timeout, locking door"));
-      door1_closelock();
-    }      
+      door_unlocked_state = DOORLOCK_CLOSED;
+    }
 
-    if(door1_sensor_open())
+    door1_openlock();
+    door2_openlock();
+  }
+  else
+  { //Check door sensors
+    if (door1_status == DOORLOCK_OPEN)
     {
-      Console.println(F("Door1 open, locking door"));
-      door1_closelock();
+      if(timer_expired(tmr_door1_open, TIME_DOOR1_UNLOCK))
+      {
+        Console.println(F("Door1 timeout, locking door"));
+        door1_closelock();
+      }      
+  
+      if(door1_sensor_open())
+      {
+        Console.println(F("Door1 open, locking door"));
+        door1_closelock();
+      }
+    }
+  
+    if (door2_status == DOORLOCK_OPEN)
+    {
+      if (timer_expired(tmr_door2_open, TIME_DOOR2_UNLOCK))
+      {
+        Console.println(F("Door2 timeout, locking door"));
+        door2_closelock();
+      }      
+  
+      if (door2_sensor_open())
+      {
+        Console.println(F("Door2 open, locking door"));
+        door2_closelock();
+      }
     }
   }
-
-  if (door2_status == DOORLOCK_OPEN)
-  {
-    if (timer_expired(tmr_door2_open, TIME_DOOR2_UNLOCK))
-    {
-      Console.println(F("Door2 timeout, locking door"));
-      door2_closelock();
-    }      
-
-    if (door2_sensor_open())
-    {
-      Console.println(F("Door2 open, locking door"));
-      door2_closelock();
-    }
-  }
-
   //Send ping to show we are alive
   if (abs(millis() - tmr_last_ping) > 15000)
   {
@@ -430,8 +465,6 @@ void loop()
   //Check USB Serial
   usbserial_handler();
 
-  //Reset watchdog
-  wdt_reset();
 
   //Check inputs, print messages if change is detected
   if (digitalRead(PIN_GP_DOOR1_BUTTON) != PIN_GP_DOOR1_BUTTON_state)
@@ -455,6 +488,9 @@ void loop()
     update_inputs();
   if (digitalRead(PIN_GP_DOOR2_SENSOR) != PIN_GP_DOOR2_SENSOR_state)
     update_inputs();
+
+  //Reset watchdog
+  wdt_reset();
 }
 
 /*
@@ -626,7 +662,7 @@ uint8_t getCheckSum(char *string, int strlength)
 
 bool timer_expired(unsigned long tmr, unsigned int time_ms)
 {
-  if (abs(millis() - tmr) > time_ms)
+  if ((millis() - tmr) > time_ms)
   {
     return true;
   }
@@ -682,7 +718,12 @@ void getStateStr()
     case MODULE_PASSAGE_4_DOOR2_OPEN:
       strcpy_PF(tempstr2, PSTR("Module status: MODULE_PASSAGE_4_DOOR2_OPEN"));
       break;
-
+    case MODULE_WEB_PING_SENT:
+      strcpy_PF(tempstr2, PSTR("Module status: MODULE_WEB_PING_SENT"));
+      break;
+    case MODULE_WEB_PING_RECV:
+      strcpy_PF(tempstr2, PSTR("Module status: MODULE_WEB_PING_RECV"));
+      break;
     default:
       sprintf(tempstr2, "Module status: UNDEFINED_STATE:%i", module_status);
       break;
@@ -736,7 +777,8 @@ void usbprint_sensors()
 
 void parse_passage_query_recv()
 {
-  int pos;
+  char* pos;
+  int pos_i;
 
   //failsafe
   if (tempstr_i < 2)
@@ -745,20 +787,105 @@ void parse_passage_query_recv()
     return;
   }
   
-  pos = strstr(tempstr, "<dpv5>") - tempstr;
+  //Check that <dpv5> is found
+  pos = strstr(tempstr, "<dpv5>");
+  if (pos == NULL)
+  {
+    passage_failsafe();
+    return;
+  }
 
-  sprintf(tempstr2, "Result: %c", tempstr[pos+6]);
+  pos_i = strstr(tempstr, "<dpv5>") - tempstr;
+
+  sprintf(tempstr2, "Result: %c", tempstr[pos_i+6]);
   Console.println(tempstr2);
 
-  if (tempstr[pos+6] == '0') // Passage denied
+  if (tempstr[pos_i+6] == '0') // Passage denied
   {
     passage_denied();
   }
-  else
+  else if (tempstr[pos_i+6] == '1') // Passage ok, normal
   {
     passage_ok();
   }
+  else if (tempstr[pos_i+6] == '2') // Passage ok, open everything long time
+  {
+    passage_failsafe();
+  }
+  else if (tempstr[pos_i+6] == 'D') // Door unlocked
+  {
+    door_unlocked_state = DOORLOCK_OPEN;
+    door_unlocked_tmr = millis();  
+  }
+  else if (tempstr[pos_i+6] == 'd') // Door unlocked
+  {
+    door_unlocked_state = DOORLOCK_CLOSED;  
+    door_unlocked_tmr = millis();  
+  }
+  else
+  {
+    passage_failsafe();
+  }
 }
+
+void parse_webping_recv()
+{
+  char* pos;
+  int pos_i;
+
+  //Check that <dpv5> is found
+  pos = strstr(tempstr, "<dpv5>");
+  if (pos == NULL)
+  {
+    return;
+  }
+
+  pos_i = strstr(tempstr, "<dpv5>") - tempstr;
+
+  sprintf(tempstr2, "Result: %c", tempstr[pos_i+6]);
+  Console.println(tempstr2);
+
+  if (tempstr[pos_i+6] == '0') // Passage denied
+  {
+    passage_denied();
+  }
+  else if (tempstr[pos_i+6] == '1') // Passage ok, normal
+  {
+    passage_ok();
+  }
+  else if (tempstr[pos_i+6] == '2') // Passage ok, open everything long time
+  {
+    passage_failsafe();
+  }
+  else if (tempstr[pos_i+6] == 'D') // Door unlocked
+  {
+    door_unlocked_state = DOORLOCK_OPEN;
+    door_unlocked_tmr = millis();  
+  }
+  else if (tempstr[pos_i+6] == 'd') // Door unlocked
+  {
+    door_unlocked_state = DOORLOCK_CLOSED;  
+    door_unlocked_tmr = millis();  
+  }
+}
+
+
+void passage_failsafe()
+{
+  door1_openlock();
+  door2_openlock();
+
+  change_module_status(MODULE_IDLE);
+
+  //Play init tune
+  cvLED(CV5600_LED_GREEN);
+  cvSummer(100);
+  delay(100);
+  cvSummer(100);
+  delay(100);
+  cvSummer(100);
+}
+
 
 void passage_ok()
 {
@@ -797,7 +924,7 @@ void door1_openlock()
   tmr_door1_open = millis();
   door1_status = DOORLOCK_OPEN;
   digitalWrite(PIN_GP_DOOR1_LOCK, HIGH);
-  Console.println("Door1 unlock");
+//  Console.println("Door1 unlock");
 }
 
 void door1_closelock()
@@ -806,7 +933,7 @@ void door1_closelock()
   door1_status = DOORLOCK_CLOSED;
   digitalWrite(PIN_GP_DOOR1_LOCK, LOW);
   cvLED(CV5600_LED_RED);
-  Console.println("Door1 lock");
+//  Console.println("Door1 lock");
 }
 
 void door2_openlock()
@@ -814,7 +941,7 @@ void door2_openlock()
   tmr_door2_open = millis();
   door2_status = DOORLOCK_OPEN;
   digitalWrite(PIN_GP_DOOR2_LOCK, HIGH);
-  Console.println("Door2 unlock");
+//  Console.println("Door2 unlock");
 }
 
 void door2_closelock()
@@ -823,7 +950,7 @@ void door2_closelock()
   door2_status = DOORLOCK_CLOSED;
   digitalWrite(PIN_GP_DOOR2_LOCK, LOW);
   cvLED(CV5600_LED_RED);
-  Console.println("Door2 lock");
+//  Console.println("Door2 lock");
 }
 
 inline bool door1_sensor_open()
