@@ -5,7 +5,6 @@
 #pragma message ( "Location: Tannefors" )
 #define PASSAGE_POINT "TANNEFORS"
 #define ONEDOORMODE 1
-#define TFHACK 1
 //pinout
 #define PIN_CV_RX 10
 #define PIN_CV_TX 11
@@ -21,6 +20,24 @@
 #define PIN_GP_DOOR2_SENSOR_OPEN LOW
   */
   
+#pragma message ( "Location: FLX Arena" )
+#define PASSAGE_POINT "FLXARENA"
+#define ONEDOORMODE 1
+//pinout
+#define PIN_CV_RX 10
+#define PIN_CV_TX 11
+#define PIN_CV_LED 9
+#define PIN_CV_SUMMER 8
+#define PIN_GP_DOOR1_LOCK 12
+#define PIN_GP_DOOR2_LOCK 13
+#define PIN_GP_DOOR1_BUTTON A0
+#define PIN_GP_DOOR2_BUTTON A1
+#define PIN_GP_DOOR1_SENSOR A2
+#define PIN_GP_DOOR2_SENSOR A3
+#define PIN_GP_DOOR1_SENSOR_OPEN LOW
+#define PIN_GP_DOOR2_SENSOR_OPEN LOW
+  
+/*
 #pragma message ( "Location: Skäggetorp" )
 #define PASSAGE_POINT "SKAGGET"
 #define ONEDOORMODE 0
@@ -36,6 +53,7 @@
 #define PIN_GP_DOOR2_SENSOR A3
 #define PIN_GP_DOOR1_SENSOR_OPEN HIGH
 #define PIN_GP_DOOR2_SENSOR_OPEN HIGH
+*/
   
 /*
 #pragma message ( "Location: Ryd" )
@@ -82,7 +100,7 @@ unsigned long tmr_web_ping;
 
 // cv5600 stuff
 #define CV5600_TIMEOUT_CMD 1500
-#define CV5600_BAUDRATE 9600
+#define CV5600_BAUDRATE 115200
 uint8_t cv5600_rx_buf[16];
 uint8_t cv5600_rx_buf_i;
 unsigned long cv5600_tmr_last_rx;
@@ -300,16 +318,7 @@ void loop()
     break;
 
   case MODULE_PASSAGE_1_DOOR1_UNLOCKED: //Wait for door to open, then go to next state
-#if (TFHACK == 1)
-#pragma message ( "Tannefors mode" )
-    door1_openlock();
-    door2_openlock();
-    delay(250);
-    door1_closelock();
-    door2_closelock();
-    change_module_status(MODULE_IDLE);
-
-#elif (ONEDOORMODE == 1)
+#if (ONEDOORMODE == 1)
 #pragma message ( "One door mode" )
     door1_openlock();
     door2_openlock();
@@ -1000,4 +1009,4 @@ int run_curl_asynch(const char* cmd)
   p.runAsynchronously();
   
 }
-
+ 
